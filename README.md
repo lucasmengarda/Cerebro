@@ -1,17 +1,13 @@
 
 # Cerebro Client
 
-<!-- ![Cerebro screenshot](./public/cerebro.png) -->
+<img src="https://github.com/lucasmengarda/Cerebro/blob/main/public/cerebro.png" width="384"/>
 
 Local-first desktop app built with **Tauri + React** that lets you:
 
 - Chat with **local** Hugging Face models (downloaded to your machine)
 - Download/manage models from a curated list
 - Use a lightweight **API Client** to send HTTP requests to your own backends
-
----
-
-## English
 
 ### Why this project exists
 
