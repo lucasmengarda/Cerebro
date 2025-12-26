@@ -1,26 +1,15 @@
 // import reactLogo from "./assets/react.svg";
 // import { invoke } from "@tauri-apps/api/core";
 
-import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import "./App.css";
 import Chat from "./app/Chat";
 import APIClient from "./app/APIClient";
-import { useEffect, useState } from "react";
+import Models from "./app/Models";
+import { useRef, useState } from "react";
 
 function AppContainer() {
-  const [activePage, setActivePage] = useState("dashboard");
-
-  const location = useLocation();
-
-  useEffect(() => {
-    const path = location.pathname;
-
-    if (path.includes("/apiclient")) {
-      setActivePage("apiclient");
-    } else {
-      setActivePage("chat");
-    }
-  }, [location]);
+  const [activePage, setActivePage] = useState("chat");
+  const mainDiv = useRef<HTMLDivElement | null>(null);
 
   return (
     <main className="container">
@@ -31,26 +20,63 @@ function AppContainer() {
         </p>
       </div>
 
-      {/* Seletor de tabs */}
-      <div className="bg-gray-400/30 rounded-full inline-flex gap-1 p-1 w-fit">
+      {/* Seletor de Tabs */}
+      <div className="bg-gray-400/30 rounded-full inline-flex gap-1 p-1 w-fit transition-all duration-200">
         <BotaoContainer
           nome="Chat"
-          rota="/"
           selecionado={activePage === "chat"}
+          onClick={() => {
+            mainDiv.current!.style.transform = "translateX(0%)";
+            setActivePage("chat");
+            window.dispatchEvent(
+              new CustomEvent("lucasmengarda::updateChat", {
+                detail: {},
+              })
+            );
+          }}
         />
         <BotaoContainer
           nome="API Client"
-          rota="/apiclient"
           selecionado={activePage === "apiclient"}
+          onClick={() => {
+            mainDiv.current!.style.transform = "translateX(-100%)";
+            setActivePage("apiclient");
+            window.dispatchEvent(
+              new CustomEvent("lucasmengarda::updateApiclient", {
+                detail: {},
+              })
+            );
+          }}
+        />
+        {"·"}
+        <BotaoContainer
+          nome="Models"
+          selecionado={activePage === "models"}
+          onClick={() => {
+            mainDiv.current!.style.transform = "translateX(-200%)";
+            setActivePage("models");
+            window.dispatchEvent(
+              new CustomEvent("lucasmengarda::updateModels", {
+                detail: {},
+              })
+            );
+          }}
         />
       </div>
 
       {/* Container Real */}
-      <div className="mt-0 flex-1 overflow-auto">
-        <Routes>
-          <Route path="/" element={<Chat />} />
-          <Route path="/apiclient" element={<APIClient />} />
-        </Routes>
+      <div className="mt-0 flex-1 overflow-hidden">
+        <div ref={mainDiv} className="flex h-full w-full transition-transform ease-in-out duration-300">
+          <div className="w-full shrink-0">
+            <Chat />
+          </div>
+          <div className="w-full shrink-0">
+            <APIClient />
+          </div>
+          <div className="w-full shrink-0">
+            <Models />
+          </div>
+        </div>
       </div>
     </main>
   );
@@ -58,14 +84,14 @@ function AppContainer() {
 
 function BotaoContainer({
   nome,
-  rota,
+  onClick,
   selecionado = false,
 }: {
   nome: string;
-  rota: string;
+  onClick?: () => void;
   selecionado?: boolean;
 }) {
-  const navigate = useNavigate();
+  
   return (
     <button
       className={`rounded-full bg-black/70 px-8 text-xs py-0.5 transition-colors ${
@@ -73,7 +99,7 @@ function BotaoContainer({
           ? "bg-white/30 font-semibold border-2 border-gray-400 hover:bg-gray-400/80"
           : "font-normal hover:bg-gray-500/80"
       }`}
-      onClick={() => navigate(rota)}
+      onClick={onClick}
     >
       {nome}
     </button>

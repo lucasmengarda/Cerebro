@@ -1,6 +1,10 @@
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+import { MODELS, safeReadInstalledModelIds } from "./modelCatalog";
 
 
 type ChatRole = "user" | "assistant";
@@ -15,6 +19,7 @@ type ChatMessage = {
 
 type LocalModel = {
   id: string;
+  huggingfaceId: string;
   detail?: string;
 };
 
@@ -23,14 +28,36 @@ function createId() {
 }
 
 function Chat() {
-  const models: LocalModel[] = useMemo(
-    () => [
-      { id: "gemma-2-2b", detail: "Local" },
-      { id: "llama-3-2-3b", detail: "Local" },
-      { id: "qwen2-5-1-5b", detail: "Local" },
-    ],
-    []
-  );
+  const [refreshKeyLocal, setRefreshKeyLocal] = useState(0);
+
+  const models: LocalModel[] = useMemo(() => {
+    const installed = safeReadInstalledModelIds();
+    const installedModels = MODELS.filter((m) => installed.includes(m.id)).map(
+      (m) => ({ id: m.id, huggingfaceId: m.huggingfaceId, detail: "Local" })
+    );
+    if (installedModels.length > 0) return installedModels;
+
+    // Fallback so Chat works before any installs.
+    return MODELS.slice(0, 3).map((m) => ({
+      id: m.id,
+      huggingfaceId: m.huggingfaceId,
+      detail: "Local",
+    }));
+  }, [refreshKeyLocal]);
+
+  useEffect(() => {
+    const handleUpdateChat = () => {
+      setRefreshKeyLocal((prev) => prev + 1);
+    };
+
+    window.addEventListener("lucasmengarda::updateChat", handleUpdateChat);
+    return () => {
+      window.removeEventListener(
+        "lucasmengarda::updateChat",
+        handleUpdateChat
+      );
+    };
+  }, []);
 
   const [selectedModelId, setSelectedModelId] = useState(models[0]?.id ?? "");
   const selectedModel = models.find((m) => m.id === selectedModelId);
@@ -47,6 +74,13 @@ function Chat() {
 
   const [draft, setDraft] = useState("");
   const [isThinking, setIsThinking] = useState(false);
+  const [activeGenerationId, setActiveGenerationId] = useState<string | null>(
+    null
+  );
+  const [updateChatScrolltop, setUpdateChatScrolltop] = useState(0);
+  const activeGenerationIdRef = useRef<string | null>(null);
+  const activeAssistantMessageIdRef = useRef<string | null>(null);
+  const selectedModelRef = useRef<LocalModel | undefined>(undefined);
 
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -54,11 +88,121 @@ function Chat() {
     const el = listRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages.length, isThinking]);
+  }, [messages.length, isThinking, updateChatScrolltop]);
+
+  useEffect(() => {
+    activeGenerationIdRef.current = activeGenerationId;
+  }, [activeGenerationId]);
+
+  useEffect(() => {
+    selectedModelRef.current = selectedModel;
+  }, [selectedModel]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenToken: null | (() => void) = null;
+    let unlistenDone: null | (() => void) = null;
+    let unlistenError: null | (() => void) = null;
+
+    (async () => {
+      unlistenToken = await listen<{
+        generation_id: string;
+        token: string;
+      }>("cerebro:chat_token", (event) => {
+        const gen = event.payload?.generation_id;
+        if (!gen || gen !== activeGenerationIdRef.current) return;
+        const assistantId = activeAssistantMessageIdRef.current;
+        if (!assistantId) return;
+        const token = event.payload?.token ?? "";
+        if (!token) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: m.content + token } : m
+          )
+        );
+        setUpdateChatScrolltop((prev) => prev + 1);
+      });
+
+      // For React Dev online where it mount/unmount twice.
+      if (disposed) {
+        unlistenToken();
+        unlistenToken = null;
+        return;
+      }
+
+      unlistenDone = await listen<{ generation_id: string }>(
+        "cerebro:chat_done",
+        (event) => {
+          const gen = event.payload?.generation_id;
+          if (!gen || gen !== activeGenerationIdRef.current) return;
+          setIsThinking(false);
+          setActiveGenerationId(null);
+          activeAssistantMessageIdRef.current = null;
+        }
+      );
+
+      if (disposed) {
+        unlistenDone();
+        unlistenDone = null;
+        return;
+      }
+
+      unlistenError = await listen<{
+        generation_id: string | null;
+        message: string;
+      }>("cerebro:chat_error", (event) => {
+        const gen = event.payload?.generation_id;
+        // If generation_id is null, treat as global runner error.
+        if (gen && gen !== activeGenerationIdRef.current) return;
+
+        const message = event.payload?.message ?? "Unknown error";
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: createId(),
+            role: "assistant",
+            selectedModel: selectedModelRef.current,
+            content: `Error: ${message}`,
+            createdAt: Date.now(),
+          },
+        ]);
+
+        setIsThinking(false);
+        setActiveGenerationId(null);
+        activeAssistantMessageIdRef.current = null;
+      });
+
+      if (disposed) {
+        unlistenError();
+        unlistenError = null;
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      if (unlistenToken) unlistenToken();
+      if (unlistenDone) unlistenDone();
+      if (unlistenError) unlistenError();
+    };
+  }, []);
 
   async function sendMessage() {
+    
+    if (isThinking) {
+      await invoke("python_runtime_start");
+      await invoke<{ generationId: string }>("chat_cancel", {
+        generationId: activeGenerationId
+      });
+      setIsThinking(false);
+      setActiveGenerationId(null);
+      activeAssistantMessageIdRef.current = null;
+      return;
+    }
     const text = draft.trim();
-    if (!text || isThinking) return;
+
+    if (!text) {
+      return;
+    }
 
     const userMessage: ChatMessage = {
       id: createId(),
@@ -71,24 +215,50 @@ function Chat() {
     setDraft("");
     setIsThinking(true);
 
-    // Placeholder: aqui entra a integração com seu runner local (Gemma, etc.).
-    // Ex.: invoke("chat", { model: selectedModelId, messages: ... })
+    const assistantId = createId();
+    activeAssistantMessageIdRef.current = assistantId;
 
-    await new Promise((r) => setTimeout(r, 450));
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantId,
+        role: "assistant",
+        selectedModel: selectedModel,
+        content: "",
+        createdAt: Date.now(),
+      },
+    ]);
 
-    const assistantMessage: ChatMessage = {
-      id: createId(),
-      role: "assistant",
-      selectedModel: selectedModel,
-      content: `I haven't connected the local runtime yet — but the UI is ready to plug in the backend.`,
-      createdAt: Date.now(),
-    };
-    setMessages((prev) => [...prev, assistantMessage]);
-    setIsThinking(false);
+    try {
+      await invoke("python_runtime_start");
+      const started = await invoke<{ generation_id: string }>("chat_generate", {
+        payload: {
+          model: selectedModel?.huggingfaceId ?? selectedModelId,
+          prompt: text,
+          max_new_tokens: 1024,
+          temperature: 0.6,
+        },
+      });
+      setActiveGenerationId(started.generation_id);
+    } catch (e) {
+      setIsThinking(false);
+      setActiveGenerationId(null);
+      activeAssistantMessageIdRef.current = null;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: createId(),
+          role: "assistant",
+          selectedModel: selectedModel,
+          content: `Error: ${String(e)}`,
+          createdAt: Date.now(),
+        },
+      ]);
+    }
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col shrink-0 w-full transition-transform ease-in-out duration-300">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
@@ -139,7 +309,7 @@ function Chat() {
 
           {isThinking ? (
             <div className="flex justify-start">
-              <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-white/30 text-white shadow-2xl border border-gray-400 px-4 py-3">
+              <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-white/30 text-white border border-gray-400 px-4 py-3">
                 <div className="text-[11px] uppercase tracking-wider opacity-60 mb-1">
                   AI
                 </div>
@@ -188,24 +358,25 @@ function Chat() {
             <button
               type="button"
               onClick={sendMessage}
-              disabled={isThinking || !draft.trim()}
+              disabled={!isThinking && !draft.trim()}
               className={
                 "shrink-0 rounded-2xl px-4 py-3 text-sm font-semibold transition-all shadow-xl " +
-                (isThinking || !draft.trim()
+                (!isThinking && !draft.trim()
                   ? "bg-gray-400/30 text-white/50 cursor-not-allowed"
                   : "bg-white text-black hover:bg-gray-100/80")
               }
             >
-              Send
+              {isThinking ? "Cancel" : "Send"}
             </button>
           </div>
         </div>
 
-        <p className="mt-1 text-center text-[9px] text-white/50">
-          Contribute to this open-source project on{" "}
+        <p className="my-2 text-center text-[9px] text-white/50 leading-tight">
+          The first message will take longer since the model needs to be loaded. Contribute to this open-source project on{" "}
           <a
+            target="_blank"
             className="underline"
-            href="https://github.com/lucasmengarda/cerebro"
+            href="https://github.com/lucasmengarda/Cerebro"
           >
             GitHub
           </a>

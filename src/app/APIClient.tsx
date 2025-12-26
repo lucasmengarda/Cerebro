@@ -217,7 +217,7 @@ function APIClient() {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col shrink-0 w-full transition-transform ease-in-out duration-300">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="min-w-0"></div>
