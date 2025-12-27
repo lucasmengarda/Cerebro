@@ -77,6 +77,21 @@ The app has three main parts:
 	- `bun run tauri dev`
 	- or `npm run tauri dev` (Bun still required by Tauri hooks)
 
+### Packaging (macOS .dmg)
+
+This project bundles the Python runner as a **sidecar executable** (`cerebro_runner`) so end users don’t need a system `python3`.
+
+1. Build the DMG
+
+	- `bunx tauri build`
+
+2. Output location
+
+	- `src-tauri/target/release/bundle/dmg/`
+
+> Note: `tauri build` runs `bun run build:sidecar` via `beforeBuildCommand`.
+> The sidecar is built with PyInstaller and can be very large due to `torch/transformers`.
+
 ### Python dependencies
 
 The Python sidecar requires packages such as:
@@ -157,6 +172,21 @@ O app tem três partes principais:
 
 	- `bun run tauri dev`
 	- ou `npm run tauri dev` (o Bun continua sendo necessário)
+
+### Empacotamento (macOS .dmg)
+
+Este projeto inclui o runner Python como um **executável sidecar** (`cerebro_runner`), então o usuário final não precisa ter `python3` instalado.
+
+1. Gerar o DMG
+
+	- `bunx tauri build`
+
+2. Onde o DMG fica
+
+	- `src-tauri/target/release/bundle/dmg/`
+
+> Observação: `tauri build` executa `bun run build:sidecar` via `beforeBuildCommand`.
+> O sidecar é gerado com PyInstaller e pode ficar muito grande por causa de `torch/transformers`.
 
 ### Dependências Python
 

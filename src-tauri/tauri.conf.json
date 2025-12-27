@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun run build && bun run build:sidecar",
     "frontendDist": "../dist"
   },
   "app": {
@@ -34,10 +34,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "bin/cerebro_runner"
+    ],
     "icon": [
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
+      "icons/icon@2x.icns",
       "icons/icon.ico"
     ],
     "resources": [

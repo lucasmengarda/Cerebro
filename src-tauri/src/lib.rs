@@ -85,6 +85,45 @@ fn resolve_runner_script_path(app: &tauri::AppHandle) -> Result<std::path::PathB
     Ok(resource_dir.join("py/cerebro_runner.py"))
 }
 
+fn resolve_runner_sidecar_path(app: &tauri::AppHandle) -> Result<Option<std::path::PathBuf>, String> {
+    // In dev, allow running a locally-built sidecar in src-tauri/bin.
+    let dev_bin_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin");
+    let dev_candidates = [
+        dev_bin_dir.join("cerebro_runner-aarch64-apple-darwin"),
+        dev_bin_dir.join("cerebro_runner-x86_64-apple-darwin"),
+        dev_bin_dir.join("cerebro_runner"),
+    ];
+    if let Some(p) = dev_candidates.into_iter().find(|p| p.exists()) {
+        return Ok(Some(p));
+    }
+
+    // In bundled apps, the sidecar may be placed under Resources and/or MacOS.
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Failed to resolve resource dir: {e}"))?;
+
+    let mut candidates = vec![
+        resource_dir.join("cerebro_runner-aarch64-apple-darwin"),
+        resource_dir.join("cerebro_runner-x86_64-apple-darwin"),
+        resource_dir.join("cerebro_runner"),
+        resource_dir.join("bin").join("cerebro_runner-aarch64-apple-darwin"),
+        resource_dir.join("bin").join("cerebro_runner-x86_64-apple-darwin"),
+        resource_dir.join("bin").join("cerebro_runner"),
+    ];
+
+    if let Some(contents_dir) = resource_dir.parent() {
+        candidates.push(contents_dir.join("MacOS").join("cerebro_runner-aarch64-apple-darwin"));
+        candidates.push(contents_dir.join("MacOS").join("cerebro_runner-x86_64-apple-darwin"));
+        candidates.push(contents_dir.join("MacOS").join("cerebro_runner"));
+        candidates.push(contents_dir.join("MacOS").join("bin").join("cerebro_runner-aarch64-apple-darwin"));
+        candidates.push(contents_dir.join("MacOS").join("bin").join("cerebro_runner-x86_64-apple-darwin"));
+        candidates.push(contents_dir.join("MacOS").join("bin").join("cerebro_runner"));
+    }
+
+    Ok(candidates.into_iter().find(|p| p.exists()))
+}
+
 fn generate_id() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -112,22 +151,31 @@ fn ensure_python_runtime(app: &tauri::AppHandle, state: &PythonRuntimeState) -> 
         return Ok(());
     }
 
-    let script_path = resolve_runner_script_path(app)?;
-    if !script_path.exists() {
-        return Err(format!(
-            "Python runner not found at {}",
-            script_path.display()
-        ));
-    }
+    let sidecar_path = resolve_runner_sidecar_path(app)?;
 
-    let mut child = Command::new("python3")
-        .arg("-u")
-        .arg(script_path)
+    let mut cmd = if let Some(sidecar_path) = sidecar_path {
+        Command::new(sidecar_path)
+    } else {
+        let script_path = resolve_runner_script_path(app)?;
+        if !script_path.exists() {
+            return Err(format!(
+                "Runner not found at {}",
+                script_path.display()
+            ));
+        }
+        let mut cmd = Command::new("python3");
+        cmd.arg("-u").arg(script_path);
+        cmd
+    };
+
+    let mut child = cmd
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| format!("Failed to start python3 runner: {e}"))?;
+        .map_err(|e| format!("Failed to start runner: {e}"))?;
 
     let stdin = child
         .stdin
